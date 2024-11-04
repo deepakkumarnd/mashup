@@ -27,20 +27,6 @@ type TaskDefinition struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
-func buildTaskDefinition(requestData CreateBuildRequest) TaskDefinition {
-	return TaskDefinition{
-		Id:             NewUUID(),
-		Name:           requestData.Name,
-		Description:    requestData.Description,
-		GitUrl:         requestData.GitUrl,
-		Branch:         requestData.Branch,
-		DockerHubUrl:   requestData.DockerHubUrl,
-		DockerRepoName: requestData.DockerRepoName,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-	}
-}
-
 func (d *TaskDefinition) toString() string {
 	data, err := json.Marshal(d)
 
@@ -101,25 +87,6 @@ func loadAllTaskDefinitions() map[string]TaskDefinition {
 
 var TaskDefinitionsMap map[string]TaskDefinition = loadAllTaskDefinitions()
 
-type CreateBuildRequest struct {
-	Name           string `json:"name" validate:"required,min=4,max=255"`
-	Description    string `json:"description" validate:"required,min=8,max=255"`
-	GitUrl         string `json:"git-url" "required,min=4,max=255"`
-	Branch         string `json:"branch" "required,min=2,max=64"`
-	DockerHubUrl   string `json:"dockerHubUrl" "required,min=4,max=255"`
-	DockerRepoName string `json:"dockerRepoName" "required,min=2,max=64"`
-}
-
-func parseCreateRequest(requestBody []byte) (createRequest CreateBuildRequest, _ error) {
-	err := json.Unmarshal(requestBody, &createRequest)
-
-	if err != nil {
-		fmt.Println("Error in parsing create request input json", err)
-	}
-
-	return createRequest, err
-}
-
 func NewUUID() string {
 	return uuid.Must(uuid.NewRandom()).String()
 }
@@ -141,7 +108,30 @@ func createBuild(w http.ResponseWriter, request *http.Request) {
 
 	log.Println("Got request /create-build")
 
-	// request.URL.Query().Has("id")
+	type CreateBuildRequest struct {
+		Name           string `json:"name" validate:"required,min=4,max=255"`
+		Description    string `json:"description" validate:"required,min=8,max=255"`
+		GitUrl         string `json:"git-url" "required,min=4,max=255"`
+		Branch         string `json:"branch" "required,min=2,max=64"`
+		DockerHubUrl   string `json:"dockerHubUrl" "required,min=4,max=255"`
+		DockerRepoName string `json:"dockerRepoName" "required,min=2,max=64"`
+	}
+
+	var createRequest CreateBuildRequest
+
+	var buildTaskDefinition = func(requestData CreateBuildRequest) TaskDefinition {
+		return TaskDefinition{
+			Id:             NewUUID(),
+			Name:           requestData.Name,
+			Description:    requestData.Description,
+			GitUrl:         requestData.GitUrl,
+			Branch:         requestData.Branch,
+			DockerHubUrl:   requestData.DockerHubUrl,
+			DockerRepoName: requestData.DockerRepoName,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+	}
 
 	body, err := io.ReadAll(request.Body)
 
@@ -151,14 +141,14 @@ func createBuild(w http.ResponseWriter, request *http.Request) {
 		responseStr = fmt.Sprintf("Could not read request body %s \n", err)
 		fmt.Println(responseStr)
 	} else {
-		requestData, err := parseCreateRequest(body)
+		err := json.Unmarshal(body, &createRequest)
 
 		if err != nil {
 			responseStr = fmt.Sprintln("Bad request")
 			w.WriteHeader(http.StatusBadRequest)
 		} else {
 			log.Println(string(body))
-			taskDefinition := buildTaskDefinition(requestData)
+			taskDefinition := buildTaskDefinition(createRequest)
 			TaskDefinitionsMap[taskDefinition.Id] = taskDefinition
 			responseStr = taskDefinition.toString()
 			taskDefinition.saveToDisk()
@@ -210,6 +200,9 @@ func listAll(w http.ResponseWriter, request *http.Request) {
 	}
 }
 
+func updateBuild(w http.ResponseWriter, request *http.Request) {
+}
+
 func startBuild(w http.ResponseWriter, request *http.Request) {
 	request.URL.Query().Has("id")
 	id := request.URL.Query().Get("id")
@@ -226,8 +219,7 @@ func main() {
 	mux.HandleFunc("/start-build", startBuild)
 	mux.HandleFunc("/get-build", getBuild)
 	mux.HandleFunc("/list-all-builds", listAll)
-	// mux.HandleFunc("/list-builds", listBuilds)
-	// mux.HandleFunc("/get-build", getBuild)
+	mux.HandleFunc("/update-build", updateBuild)
 
 	log.Println("Starting server on port 8080 ...")
 
