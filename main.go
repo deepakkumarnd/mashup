@@ -139,6 +139,7 @@ func createBuild(w http.ResponseWriter, request *http.Request) {
 
 	if err != nil {
 		responseStr = fmt.Sprintf("Could not read request body %s \n", err)
+		w.WriteHeader(http.StatusBadRequest)
 		fmt.Println(responseStr)
 	} else {
 		err := json.Unmarshal(body, &createRequest)
@@ -201,6 +202,64 @@ func listAll(w http.ResponseWriter, request *http.Request) {
 }
 
 func updateBuild(w http.ResponseWriter, request *http.Request) {
+	log.Println("Got request /update-build")
+
+	type UpdateBuildRequest struct {
+		Name           string `json:"name" validate:"required,min=4,max=255"`
+		Description    string `json:"description" validate:"required,min=8,max=255"`
+		GitUrl         string `json:"git-url" "required,min=4,max=255"`
+		Branch         string `json:"branch" "required,min=2,max=64"`
+		DockerHubUrl   string `json:"dockerHubUrl" "required,min=4,max=255"`
+		DockerRepoName string `json:"dockerRepoName" "required,min=2,max=64"`
+	}
+
+	var updateRequest UpdateBuildRequest
+
+	var responseStr string
+
+	request.URL.Query().Has("id")
+	id := request.URL.Query().Get("id")
+
+	taskDefinition, ok := TaskDefinitionsMap[id]
+
+	var updateTaskDefinition = func() {
+		taskDefinition.Name = updateRequest.Name
+		taskDefinition.Description = updateRequest.Description
+		taskDefinition.GitUrl = updateRequest.GitUrl
+		taskDefinition.DockerHubUrl = updateRequest.DockerHubUrl
+		taskDefinition.DockerRepoName = updateRequest.DockerRepoName
+		taskDefinition.UpdatedAt = time.Now()
+	}
+
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, "Task definition not found")
+		return
+	}
+
+	body, err := io.ReadAll(request.Body)
+
+	if err != nil {
+		responseStr = fmt.Sprintf("Could not read request body %s \n", err)
+		fmt.Println(responseStr)
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		err := json.Unmarshal(body, &updateRequest)
+
+		if err != nil {
+			responseStr = fmt.Sprintln("Bad request")
+			w.WriteHeader(http.StatusBadRequest)
+		} else {
+			log.Println(string(body))
+			updateTaskDefinition()
+			TaskDefinitionsMap[taskDefinition.Id] = taskDefinition
+			responseStr = taskDefinition.toString()
+			taskDefinition.saveToDisk()
+			w.WriteHeader(http.StatusCreated)
+		}
+	}
+
+	io.WriteString(w, responseStr)
 }
 
 func startBuild(w http.ResponseWriter, request *http.Request) {
