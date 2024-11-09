@@ -10,10 +10,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const DEFAULT_BUILD_QUEUE_SIZE = 3
 
 type TaskDefinition struct {
 	Id             string    `json:"id"`
@@ -25,6 +28,27 @@ type TaskDefinition struct {
 	DockerRepoName string    `json:"dockerRepoName"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type Build struct {
+	taskDefinition TaskDefinition
+	queue          chan string
+}
+
+func (b *Build) pipeline() {
+	for id := range b.queue {
+		log.Println("Building ", id)
+		time.Sleep(1 * time.Minute)
+	}
+}
+
+func (b *Build) Enqueue() bool {
+	if len(b.queue) == cap(b.queue) {
+		return false
+	} else {
+		b.queue <- b.taskDefinition.Id
+		return true
+	}
 }
 
 func (d *TaskDefinition) toString() string {
@@ -85,7 +109,37 @@ func loadAllTaskDefinitions() map[string]TaskDefinition {
 	return mapping
 }
 
-var TaskDefinitionsMap map[string]TaskDefinition = loadAllTaskDefinitions()
+func loadAllBuilds(taskDefinitions map[string]TaskDefinition) {
+	for _, definition := range taskDefinitions {
+		initBuild(definition)
+	}
+}
+
+var TaskDefinitionsMap map[string]TaskDefinition
+
+var BuildMap map[string]Build = make(map[string]Build)
+
+func Init() {
+	TaskDefinitionsMap = loadAllTaskDefinitions()
+	loadAllBuilds(TaskDefinitionsMap)
+}
+
+func initBuild(taskDefinition TaskDefinition) Build {
+	build := Build{taskDefinition: taskDefinition, queue: make(chan string, DEFAULT_BUILD_QUEUE_SIZE)}
+	oldBuild, ok := BuildMap[taskDefinition.Id]
+
+	if ok {
+		close(oldBuild.queue)
+		// Drain channel ?
+	}
+
+	BuildMap[taskDefinition.Id] = build
+	go build.pipeline()
+
+	return build
+}
+
+// var BuildMap map[string]Build = loadAllBuilds()
 
 func NewUUID() string {
 	return uuid.Must(uuid.NewRandom()).String()
@@ -151,6 +205,7 @@ func createBuild(w http.ResponseWriter, request *http.Request) {
 			log.Println(string(body))
 			taskDefinition := buildTaskDefinition(createRequest)
 			TaskDefinitionsMap[taskDefinition.Id] = taskDefinition
+			initBuild(taskDefinition)
 			responseStr = taskDefinition.toString()
 			taskDefinition.saveToDisk()
 			w.WriteHeader(http.StatusCreated)
@@ -253,6 +308,7 @@ func updateBuild(w http.ResponseWriter, request *http.Request) {
 			log.Println(string(body))
 			updateTaskDefinition()
 			TaskDefinitionsMap[taskDefinition.Id] = taskDefinition
+			initBuild(taskDefinition)
 			responseStr = taskDefinition.toString()
 			taskDefinition.saveToDisk()
 			w.WriteHeader(http.StatusCreated)
@@ -266,19 +322,42 @@ func startBuild(w http.ResponseWriter, request *http.Request) {
 	request.URL.Query().Has("id")
 	id := request.URL.Query().Get("id")
 
-	fmt.Printf("%s Got request /build?id=%s\n", time.Now(), id)
-	io.WriteString(w, "Starting pipeline")
+	log.Printf("Got request /start-build?id=%s\n", id)
+
+	if len(strings.TrimSpace(id)) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, "Invalid build identifier")
+		return
+	}
+
+	build, ok := BuildMap[id]
+
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, "Not found task definition matching id")
+		return
+	}
+
+	if build.Enqueue() {
+		io.WriteString(w, "New build enqueued")
+	} else {
+		io.WriteString(w, "Rejected, build queue full")
+	}
+
 }
 
 func main() {
+	log.Println("Starting builder")
+	Init()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", getRoot)
 	mux.HandleFunc("/up", getUp)
 	mux.HandleFunc("/create-build", createBuild)
-	mux.HandleFunc("/start-build", startBuild)
 	mux.HandleFunc("/get-build", getBuild)
 	mux.HandleFunc("/list-all-builds", listAll)
 	mux.HandleFunc("/update-build", updateBuild)
+	mux.HandleFunc("/start-build", startBuild)
 
 	log.Println("Starting server on port 8080 ...")
 
